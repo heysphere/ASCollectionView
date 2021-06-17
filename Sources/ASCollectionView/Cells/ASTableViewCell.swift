@@ -11,6 +11,11 @@ class ASTableViewCell: UITableViewCell, ASDataSourceConfigurableCell
 	let hostingController = ASHostingController<AnyView>(AnyView(EmptyView()))
 //	var skipNextRefresh: Bool = false
 
+	var cellState: ASCellState
+	{
+		ASCellState(isSelected: isSelected, isHighlighted: isHighlighted)
+	}
+
 	override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?)
 	{
 		super.init(style: .default, reuseIdentifier: reuseIdentifier)

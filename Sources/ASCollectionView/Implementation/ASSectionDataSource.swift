@@ -10,7 +10,7 @@ internal protocol ASSectionDataSourceProtocol
 	func getIndexPaths(withSectionIndex sectionIndex: Int) -> [IndexPath]
 	func getItemID<SectionID: Hashable>(for index: Int, withSectionID sectionID: SectionID) -> ASCollectionViewItemUniqueID?
 	func getUniqueItemIDs<SectionID: Hashable>(withSectionID sectionID: SectionID) -> [ASCollectionViewItemUniqueID]
-	func content(forItemID itemID: ASCollectionViewItemUniqueID) -> AnyView
+	func content(forItemID itemID: ASCollectionViewItemUniqueID, cellState: ASCellState) -> AnyView
 	func content(supplementaryID: ASSupplementaryCellID) -> AnyView?
 	var supplementaryViews: [String: AnyView] { get set }
 	func getTypeErasedData(for indexPath: IndexPath) -> Any?
@@ -31,17 +31,12 @@ internal protocol ASSectionDataSourceProtocol
 	func getContextMenu(for indexPath: IndexPath) -> UIContextMenuConfiguration?
 	func getSelfSizingSettings(context: ASSelfSizingContext) -> ASSelfSizingConfig?
 
-	func isHighlighted(index: Int) -> Bool
-	func highlightIndex(_ index: Int)
-	func unhighlightIndex(_ index: Int)
-	func shouldHighlight(_ indexPath: IndexPath) -> Bool
-
-	var selectedIndicesBinding: Binding<Set<Int>>? { get }
-	func isSelected(index: Int) -> Bool
-	func shouldSelect(_ indexPath: IndexPath) -> Bool
+	func shouldHighlight(_ indexPath: IndexPath, currentSelection: Set<Int>) -> Bool
+	func shouldSelect(_ indexPath: IndexPath, currentSelection: Set<Int>) -> Bool
 	func shouldDeselect(_ indexPath: IndexPath) -> Bool
-	func didSelect(_ indexPath: IndexPath)
-	func updateSelection(with indices: Set<Int>)
+
+	func currentSwiftUISelections() -> Set<Int>
+	func writebackSelectionToSwiftUI(with indices: Set<Int>)
 
 	var dragEnabled: Bool { get }
 	var dropEnabled: Bool { get }
@@ -68,12 +63,16 @@ protocol ASDataSourceConfigurableSupplementary
 }
 
 @available(iOS 13.0, *)
-public enum ASSectionSelectionMode
+public enum ASSectionSelectionMode<DataID: Hashable>
 {
 	case none
-	case highlighting(Binding<Set<Int>>)
-	case selectSingle((Int) -> Void)
-	case selectMultiple(Binding<Set<Int>>)
+	case single(Binding<DataID?>)
+	case multiple(Binding<Set<DataID>>)
+}
+
+internal struct ASCellState {
+	var isSelected: Bool = false
+	var isHighlighted: Bool = false
 }
 
 @available(iOS 13.0, *)
@@ -85,7 +84,7 @@ internal struct ASSectionDataSource<DataCollection: RandomAccessCollection, Data
 	var container: (Content, ASCellContext) -> Container
 	var content: (DataCollection.Element, ASCellContext) -> Content
 
-	var selectionMode: ASSectionSelectionMode = .none
+	var selectionMode: ASSectionSelectionMode<DataID> = .none
 	var shouldAllowHighlight: ((_ index: Int) -> Bool)?
 	var shouldAllowSelection: ((_ index: Int) -> Bool)?
 	var shouldAllowDeselection: ((_ index: Int) -> Bool)?
@@ -108,22 +107,27 @@ internal struct ASSectionDataSource<DataCollection: RandomAccessCollection, Data
 
 	func getIndex(of itemID: ASCollectionViewItemUniqueID) -> Int?
 	{
-		data.firstIndex(where: { $0[keyPath: dataIDKeyPath].hashValue == itemID.itemIDHash })
+		data.firstIndex(where: { AnyHashable($0[keyPath: dataIDKeyPath]) == itemID.itemID })
 	}
 
-	func cellContext(for index: Int) -> ASCellContext
+	private func getIndex(of dataID: DataID) -> Int?
+	{
+		data.firstIndex(where: { $0[keyPath: dataIDKeyPath] == dataID })
+	}
+
+	func cellContext(for index: Int, cellState: ASCellState) -> ASCellContext
 	{
 		ASCellContext(
-			isHighlighted: isHighlighted(index: index),
-			isSelected: isSelected(index: index),
+			isHighlighted: cellState.isHighlighted,
+			isSelected: cellState.isSelected,
 			index: index,
 			isFirstInSection: index == data.startIndex,
 			isLastInSection: index == data.endIndex - 1)
 	}
 
-	func content(forItemID itemID: ASCollectionViewItemUniqueID) -> AnyView
+	func content(forItemID itemID: ASCollectionViewItemUniqueID, cellState: ASCellState) -> AnyView
 	{
-		guard let content = getContent(forItemID: itemID)
+		guard let content = getContent(forItemID: itemID, cellState: cellState)
 		else
 		{
 			return AnyView(EmptyView().id(itemID))
@@ -137,11 +141,11 @@ internal struct ASSectionDataSource<DataCollection: RandomAccessCollection, Data
 		return AnyView(content.id(supplementaryID))
 	}
 
-	func getContent(forItemID itemID: ASCollectionViewItemUniqueID) -> Container?
+	func getContent(forItemID itemID: ASCollectionViewItemUniqueID, cellState: ASCellState) -> Container?
 	{
 		guard let itemIndex = getIndex(of: itemID) else { return nil }
 		let item = data[itemIndex]
-		let context = cellContext(for: itemIndex)
+		let context = cellContext(for: itemIndex, cellState: cellState)
 		let view = content(item, context)
 		return container(view, context)
 	}
@@ -220,7 +224,7 @@ internal struct ASSectionDataSource<DataCollection: RandomAccessCollection, Data
 	func getDragItem(for indexPath: IndexPath) -> UIDragItem?
 	{
 		guard dragEnabled,
-			dragDropConfig.canDragItem?(indexPath) ?? true
+					dragDropConfig.canDragItem?(indexPath) ?? true
 		else { return nil }
 		guard let item = data[safe: indexPath.item] else { return nil }
 
@@ -264,7 +268,7 @@ internal struct ASSectionDataSource<DataCollection: RandomAccessCollection, Data
 		// dragDropConfig.dataBinding?.wrappedValue.move(fromOffsets: [from], toOffset: to) //This is not behaving as expected
 		// NOTE: Binding seemingly not updated until next runloop. Any change must be done in one move; hence the var array
 		guard from != to,
-			dragDropConfig.canMoveItem?(from, to) ?? true
+					dragDropConfig.canMoveItem?(from, to) ?? true
 		else { return false }
 		if let binding = dragDropConfig.dataBinding
 		{
@@ -299,10 +303,10 @@ internal struct ASSectionDataSource<DataCollection: RandomAccessCollection, Data
 		{
 			let allDataIDs = Set(binding.wrappedValue.map { $0[keyPath: dataIDKeyPath] })
 			let noDuplicates = actualItems.filter { !allDataIDs.contains($0[keyPath: dataIDKeyPath]) }
-#if DEBUG
+			#if DEBUG
 			// Notify during debug build if IDs are not unique (programmer error)
 			if noDuplicates.count != actualItems.count { print("ASCOLLECTIONVIEW/ASTABLEVIEW: Attempted to insert an item with the same ID as one already in the section. This may cause unexpected behaviour.") }
-#endif
+			#endif
 			binding.wrappedValue.insert(contentsOf: noDuplicates, at: index)
 			return !noDuplicates.isEmpty
 		}
@@ -327,79 +331,28 @@ internal struct ASSectionDataSource<DataCollection: RandomAccessCollection, Data
 		selfSizingConfig?(context)
 	}
 
-	var highlightedIndicesBinding: Binding<Set<Int>>?
+	func shouldHighlight(_ indexPath: IndexPath, currentSelection: Set<Int>) -> Bool
 	{
-		switch selectionMode
-		{
-		case let .highlighting(highlighted):
-			return highlighted
-		default:
-			return nil
+		guard data.containsIndex(indexPath.item) else { return false }
+		switch selectionMode {
+		case .none:
+			return false
+		case .single, .multiple:
+			return shouldSelect(indexPath, currentSelection: currentSelection)
+				&& (shouldAllowHighlight?(indexPath.item) ?? true)
 		}
 	}
 
-	var selectedIndicesBinding: Binding<Set<Int>>?
-	{
-		switch selectionMode
-		{
-		case let .selectMultiple(selected):
-			return selected
-		default:
-			return nil
-		}
-	}
-
-	func isHighlighted(index: Int) -> Bool
-	{
-		(highlightedIndicesBinding?.wrappedValue.contains(index) ?? false) || (selectedIndicesBinding?.wrappedValue.contains(index) ?? false)
-	}
-
-	func highlightIndex(_ index: Int)
-	{
-        switch selectionMode
-        {
-        case .none, .selectSingle: return
-        case .highlighting, .selectMultiple:
-            DispatchQueue.main.async
-            {
-                self.highlightedIndicesBinding?.wrappedValue = highlightedIndicesBinding?.wrappedValue.union([index]) ?? []
-            }
-        }
-	}
-
-	func unhighlightIndex(_ index: Int)
-	{
-		DispatchQueue.main.async
-		{
-			self.highlightedIndicesBinding?.wrappedValue = highlightedIndicesBinding?.wrappedValue.subtracting([index]) ?? []
-		}
-	}
-
-	func shouldHighlight(_ indexPath: IndexPath) -> Bool
+	func shouldSelect(_ indexPath: IndexPath, currentSelection: Set<Int>) -> Bool
 	{
 		guard data.containsIndex(indexPath.item) else { return false }
 		switch selectionMode
 		{
-		case .none: return false
-		case .highlighting:
-			return shouldAllowHighlight?(indexPath.item) ?? true
-		case .selectSingle, .selectMultiple:
-			return shouldSelect(indexPath) && (shouldAllowHighlight?(indexPath.item) ?? true)
-		}
-	}
-
-	func isSelected(index: Int) -> Bool
-	{
-		selectedIndicesBinding?.wrappedValue.contains(index) ?? false
-	}
-
-	func shouldSelect(_ indexPath: IndexPath) -> Bool
-	{
-		guard data.containsIndex(indexPath.item) else { return false }
-		switch selectionMode
-		{
-		case .none, .highlighting: return false
-		case .selectSingle, .selectMultiple:
+		case .none:
+			return false
+		case .single:
+			return currentSelection.isEmpty && (shouldAllowSelection?(indexPath.item) ?? true)
+		case .multiple:
 			return shouldAllowSelection?(indexPath.item) ?? true
 		}
 	}
@@ -410,21 +363,35 @@ internal struct ASSectionDataSource<DataCollection: RandomAccessCollection, Data
 		return shouldAllowDeselection?(indexPath.item) ?? true
 	}
 
-	func didSelect(_ indexPath: IndexPath)
-	{
-		switch selectionMode
-		{
-		case let .selectSingle(closure):
-			closure(indexPath.item)
-		default: break
+	func currentSwiftUISelections() -> Set<Int> {
+		let ids: Set<DataID>
+
+		switch selectionMode {
+		case .none:
+			return []
+
+		case let .multiple(binding):
+			ids = binding.wrappedValue
+
+		case let .single(binding):
+			ids = binding.wrappedValue.map { [$0] } ?? []
 		}
+
+		return Set(ids.compactMap(getIndex(of:)))
 	}
 
-	func updateSelection(with indices: Set<Int>)
-	{
-		DispatchQueue.main.async
-		{
-			self.selectedIndicesBinding?.wrappedValue = indices
+	func writebackSelectionToSwiftUI(with indices: Set<Int>) {
+		let newSelection = Set(indices.compactMap { data[safe: $0]?[keyPath: dataIDKeyPath] })
+
+		switch selectionMode {
+		case .none:
+			break
+
+		case let .multiple(binding):
+			binding.wrappedValue = newSelection
+			
+		case let .single(binding):
+			binding.wrappedValue = newSelection.first
 		}
 	}
 }

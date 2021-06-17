@@ -24,13 +24,29 @@ struct RemindersScreen: View
 
 	let addNewModel = GroupModel(icon: "plus", title: "Create new list", contentCount: nil, color: .green)
 
+	@State var selectedUpperID: String?
+	private var selectedUpperItem: Binding<GroupModel?>
+	{
+		.init(
+			get: { selectedUpperID.flatMap { id in upperData.first { $0.id == id }} },
+			set: { selectedUpperID = $0?.id }
+		)
+	}
+
 	var body: some View
 	{
 		ASCollectionView
 		{
-			ASCollectionViewSection<Section>(id: .upper, data: self.upperData)
-			{ model, cellContext in
-				GroupLarge(model: model, background: Color(.secondarySystemGroupedBackground).brightness(cellContext.isHighlighted ? -0.2 : 0))
+			ASCollectionViewSection<Section>(
+				id: .upper,
+				data: self.upperData,
+				selectionMode: .single($selectedUpperID)
+			) { model, cellContext in
+				GroupLarge(
+					model: model,
+					background: Color(.secondarySystemGroupedBackground)
+						.brightness(cellContext.isSelected ? -0.3 : (cellContext.isHighlighted ? -0.1 : 0))
+				)
 			}
 
 			ASCollectionViewSection<Section>(id: .list, data: self.lowerData)
@@ -71,6 +87,10 @@ struct RemindersScreen: View
 		.background(Color(.systemGroupedBackground))
 		.edgesIgnoringSafeArea(.all)
 		.navigationBarTitle("Reminders", displayMode: .inline)
+		.sheet(item: selectedUpperItem, onDismiss: { self.selectedUpperID = nil })
+		{ selection in
+			Text("Selected \(selection.id) in first section")
+		}
 	}
 
 	let groupBackgroundElementID = UUID().uuidString

@@ -143,8 +143,6 @@ public struct ASCollectionView<SectionID: Hashable>: UIViewControllerRepresentab
 		private var hasFiredBoundaryNotificationForBoundary: Set<Boundary> = []
 		private var haveRegisteredForSupplementaryOfKind: Set<String> = []
 
-		private var selectedIndexPaths: Set<IndexPath> = []
-
 		typealias Cell = ASCollectionViewCell
 
 		init(_ parent: ASCollectionView)
@@ -165,7 +163,7 @@ public struct ASCollectionView<SectionID: Hashable>: UIViewControllerRepresentab
 		func section(forItemID itemID: ASCollectionViewItemUniqueID) -> Section?
 		{
 			parent.sections
-				.first(where: { $0.id.hashValue == itemID.sectionIDHash })
+				.first(where: { AnyHashable($0.id) == itemID.sectionID })
 		}
 
 		func supplementaryKinds() -> Set<String>
@@ -237,9 +235,10 @@ public struct ASCollectionView<SectionID: Hashable>: UIViewControllerRepresentab
 						?? (collectionView.collectionViewLayout as? ASCollectionViewLayoutProtocol)?.selfSizingConfig
 						?? ASSelfSizingConfig()
 
-				cell.isSelected = self.isIndexPathSelected(indexPath)
-
-				cell.setContent(itemID: itemID, content: section.dataSource.content(forItemID: itemID))
+				cell.setContent(
+					itemID: itemID,
+					content: section.dataSource.content(forItemID: itemID, cellState: cell.cellState)
+				)
 
 				cell.disableSwiftUIDropInteraction = section.dataSource.dropEnabled
 				cell.disableSwiftUIDragInteraction = section.dataSource.dragEnabled
@@ -312,7 +311,16 @@ public struct ASCollectionView<SectionID: Hashable>: UIViewControllerRepresentab
 				animated: parent.animateOnDataRefresh && transactionAnimationEnabled,
 				transaction: transaction)
 
-			updateSelection(cv, transaction: transaction)
+			applySelectionFromSwiftUI(cv, transaction: transaction)
+		}
+
+		func refreshCells<C: Collection>(at indexPaths: C) where C.Element == IndexPath {
+			guard let cv = collectionViewController?.collectionView else { return }
+
+			for cell in indexPaths.compactMap(cv.cellForItem(at:))
+			{
+				refreshCell(cell, forceUpdate: false)
+			}
 		}
 
 		func refreshVisibleCells(transaction: Transaction? = nil, updateAll: Bool = true)
@@ -351,7 +359,10 @@ public struct ASCollectionView<SectionID: Hashable>: UIViewControllerRepresentab
 //			}
 //			else
 //			{
-			cell.setContent(itemID: itemID, content: section.dataSource.content(forItemID: itemID))
+			cell.setContent(
+				itemID: itemID,
+				content: section.dataSource.content(forItemID: itemID, cellState: cell.cellState)
+			)
 			cell.disableSwiftUIDropInteraction = section.dataSource.dropEnabled
 			cell.disableSwiftUIDragInteraction = section.dataSource.dragEnabled
 //			}
@@ -653,17 +664,20 @@ public struct ASCollectionView<SectionID: Hashable>: UIViewControllerRepresentab
 
 		public func collectionView(_ collectionView: UICollectionView, shouldHighlightItemAt indexPath: IndexPath) -> Bool
 		{
-			parent.sections[safe: indexPath.section]?.dataSource.shouldHighlight(indexPath) ?? true
+			parent.sections[safe: indexPath.section]?
+				.dataSource
+				.shouldHighlight(indexPath, currentSelection: selections(inSection: indexPath.section))
+				?? true
 		}
 
 		public func collectionView(_ collectionView: UICollectionView, didHighlightItemAt indexPath: IndexPath)
 		{
-			parent.sections[safe: indexPath.section]?.dataSource.highlightIndex(indexPath.item)
+			refreshCells(at: CollectionOfOne(indexPath))
 		}
 
 		public func collectionView(_ collectionView: UICollectionView, didUnhighlightItemAt indexPath: IndexPath)
 		{
-			parent.sections[safe: indexPath.section]?.dataSource.unhighlightIndex(indexPath.item)
+			refreshCells(at: CollectionOfOne(indexPath))
 		}
 
 		public func collectionView(_ collectionView: UICollectionView, willSelectItemAt indexPath: IndexPath) -> IndexPath?
@@ -678,7 +692,10 @@ public struct ASCollectionView<SectionID: Hashable>: UIViewControllerRepresentab
 
 		public func collectionView(_ collectionView: UICollectionView, shouldSelectItemAt indexPath: IndexPath) -> Bool
 		{
-			parent.sections[safe: indexPath.section]?.dataSource.shouldSelect(indexPath) ?? true
+			parent.sections[safe: indexPath.section]?
+				.dataSource
+				.shouldSelect(indexPath, currentSelection: selections(inSection: indexPath.section))
+				?? true
 		}
 
 		public func collectionView(_ collectionView: UICollectionView, shouldDeselectItemAt indexPath: IndexPath) -> Bool
@@ -688,43 +705,56 @@ public struct ASCollectionView<SectionID: Hashable>: UIViewControllerRepresentab
 
 		public func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath)
 		{
-			updateSelection(collectionView)
-			parent.sections[safe: indexPath.section]?.dataSource.didSelect(indexPath)
+			writebackSelectionToSwiftUI(collectionView)
+			refreshCells(at: CollectionOfOne(indexPath))
 		}
 
 		public func collectionView(_ collectionView: UICollectionView, didDeselectItemAt indexPath: IndexPath)
 		{
-			updateSelection(collectionView)
+			writebackSelectionToSwiftUI(collectionView)
+			refreshCells(at: CollectionOfOne(indexPath))
 		}
 
-		func updateSelection(_ collectionView: UICollectionView, transaction: Transaction? = nil)
+    private func selections(inSection section: Int) -> Set<Int> {
+			let selected = collectionViewController?.collectionView.indexPathsForSelectedItems ?? []
+			return Set(selected.lazy.filter { $0.section == section }.map(\.item))
+		}
+
+		func writebackSelectionToSwiftUI(_ collectionView: UICollectionView)
 		{
-			let selectedInDataSource = selectedIndexPathsInDataSource
 			let selectedInCollectionView = Set(collectionView.indexPathsForSelectedItems ?? [])
-			guard selectedInDataSource != selectedInCollectionView else { return }
+			guard selectedIndexPathsInSwiftUI != selectedInCollectionView else { return }
 
-			let newSelection = threeWayMerge(base: selectedIndexPaths, dataSource: selectedInDataSource, collectionView: selectedInCollectionView)
-			let (toDeselect, toSelect) = selectionDifferences(oldSelectedIndexPaths: selectedInCollectionView, newSelectedIndexPaths: newSelection)
+			let selectionBySection = Dictionary(grouping: selectedInCollectionView) { $0.section }
+				.mapValues
+				{
+					Set($0.map(\.item))
+				}
 
-			selectedIndexPaths = newSelection
-			updateSelectionBindings(newSelection)
-			updateSelectionInCollectionView(collectionView, indexPathsToDeselect: toDeselect, indexPathsToSelect: toSelect, transaction: transaction)
-		}
-
-		private var selectedIndexPathsInDataSource: Set<IndexPath>
-		{
-			parent.sections.enumerated().reduce(Set<IndexPath>())
-			{ (selectedIndexPaths, section) -> Set<IndexPath> in
-				guard let indexes = section.element.dataSource.selectedIndicesBinding?.wrappedValue else { return selectedIndexPaths }
-				let indexPaths = indexes.map { IndexPath(item: $0, section: section.offset) }
-				return selectedIndexPaths.union(indexPaths)
+			parent.sections.enumerated().forEach
+			{ offset, section in
+				section.dataSource.writebackSelectionToSwiftUI(with: selectionBySection[offset] ?? [])
 			}
 		}
 
-		private func threeWayMerge(base: Set<IndexPath>, dataSource: Set<IndexPath>, collectionView: Set<IndexPath>) -> Set<IndexPath>
+		func applySelectionFromSwiftUI(_ collectionView: UICollectionView, transaction: Transaction? = nil)
 		{
-			// In case the data source and collection view are both different from base, default to the collection view
-			base == collectionView ? dataSource : collectionView
+			let selectedInDataSource = selectedIndexPathsInSwiftUI
+			let selectedInCollectionView = Set(collectionView.indexPathsForSelectedItems ?? [])
+			guard selectedInDataSource != selectedInCollectionView else { return }
+
+			let (toDeselect, toSelect) = selectionDifferences(oldSelectedIndexPaths: selectedInCollectionView, newSelectedIndexPaths: selectedInDataSource)
+			updateSelectionInCollectionView(collectionView, indexPathsToDeselect: toDeselect, indexPathsToSelect: toSelect, transaction: transaction)
+		}
+
+		private var selectedIndexPathsInSwiftUI: Set<IndexPath>
+		{
+			parent.sections.enumerated().reduce(into: Set<IndexPath>())
+			{ (selectedIndexPaths, section) in
+				let indices = section.element.dataSource.currentSwiftUISelections()
+				let indexPaths = indices.lazy.map { IndexPath(item: $0, section: section.offset) }
+				selectedIndexPaths.formUnion(indexPaths)
+			}
 		}
 
 		private func selectionDifferences(oldSelectedIndexPaths: Set<IndexPath>, newSelectedIndexPaths: Set<IndexPath>) -> (toDeselect: Set<IndexPath>, toSelect: Set<IndexPath>)
@@ -734,24 +764,15 @@ public struct ASCollectionView<SectionID: Hashable>: UIViewControllerRepresentab
 			return (toDeselect: toDeselect, toSelect: toSelect)
 		}
 
-		private func updateSelectionBindings(_ selectedIndexPaths: Set<IndexPath>)
-		{
-			let selectionBySection = Dictionary(grouping: selectedIndexPaths) { $0.section }
-				.mapValues
-				{
-					Set($0.map(\.item))
-				}
-			parent.sections.enumerated().forEach
-			{ offset, section in
-				section.dataSource.updateSelection(with: selectionBySection[offset] ?? [])
-			}
-		}
-
 		private func updateSelectionInCollectionView(_ collectionView: UICollectionView, indexPathsToDeselect: Set<IndexPath>, indexPathsToSelect: Set<IndexPath>, transaction: Transaction? = nil)
 		{
 			let isAnimated = (transaction?.animation != nil) && !(transaction?.disablesAnimations ?? false)
 			indexPathsToDeselect.forEach { collectionView.deselectItem(at: $0, animated: isAnimated) }
 			indexPathsToSelect.forEach { collectionView.selectItem(at: $0, animated: isAnimated, scrollPosition: []) }
+			
+			// Programmatic selection & deselection does not trigger delegate call. Refresh those cells manually.
+			refreshCells(at: indexPathsToDeselect)
+			refreshCells(at: indexPathsToSelect)
 		}
 
 		func canDrop(at indexPath: IndexPath) -> Bool

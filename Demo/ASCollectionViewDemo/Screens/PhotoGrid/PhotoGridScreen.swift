@@ -7,7 +7,7 @@ import UIKit
 struct PhotoGridScreen: View
 {
 	@State var data: [Post] = DataSource.postsForGridSection(1, number: 1000)
-	@State var selectedIndexes: Set<Int> = []
+	@State var selectedIDs: Set<Int> = []
 
 	@Environment(\.editMode) private var editMode
 	var isEditing: Bool
@@ -22,7 +22,7 @@ struct PhotoGridScreen: View
 		ASCollectionViewSection(
 			id: 0,
 			data: data,
-			selectionMode: isEditing ? .selectMultiple($selectedIndexes) : .none,
+			selectionMode: isEditing ? .multiple($selectedIDs) : .none,
 			onCellEvent: onCellEvent)
 		{ item, state in
 			ZStack(alignment: .bottomTrailing)
@@ -64,7 +64,7 @@ struct PhotoGridScreen: View
 							withAnimation
 							{
 								// We want the cell removal to be animated, so explicitly specify `withAnimation`
-								self.data.remove(atOffsets: IndexSet(self.selectedIndexes))
+								self.data.removeAll { self.selectedIDs.contains($0.id) }
 							}
 						})
 						{
