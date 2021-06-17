@@ -13,6 +13,11 @@ struct RemindersScreen: View
 		case footnote
 	}
 
+  struct UpperSelection: Identifiable
+  {
+    let id: Int
+  }
+
 	var upperData: [GroupModel] = [GroupModel(icon: "calendar", title: "Today", color: .blue),
 	                               GroupModel(icon: "clock.fill", title: "Scheduled", color: .orange),
 	                               GroupModel(icon: "tray.fill", title: "All", color: .gray),
@@ -23,14 +28,22 @@ struct RemindersScreen: View
 	                               GroupModel(icon: "book.fill", title: "Reading list")]
 
 	let addNewModel = GroupModel(icon: "plus", title: "Create new list", contentCount: nil, color: .green)
+  @State var selectedUpper: UpperSelection?
 
 	var body: some View
 	{
 		ASCollectionView
 		{
-			ASCollectionViewSection<Section>(id: .upper, data: self.upperData)
-			{ model, cellContext in
-				GroupLarge(model: model, background: Color(.secondarySystemGroupedBackground).brightness(cellContext.isHighlighted ? -0.2 : 0))
+      ASCollectionViewSection<Section>(
+        id: .upper,
+        data: self.upperData,
+        selectionMode: .selectSingle { index in self.selectedUpper = UpperSelection(id: index) }
+      ) { model, cellContext in
+				GroupLarge(
+          model: model,
+          background: Color(.secondarySystemGroupedBackground)
+            .brightness(cellContext.isSelected ? -0.3 : (cellContext.isHighlighted ? -0.1 : 0))
+        )
 			}
 
 			ASCollectionViewSection<Section>(id: .list, data: self.lowerData)
@@ -71,6 +84,9 @@ struct RemindersScreen: View
 		.background(Color(.systemGroupedBackground))
 		.edgesIgnoringSafeArea(.all)
 		.navigationBarTitle("Reminders", displayMode: .inline)
+    .sheet(item: $selectedUpper, onDismiss: {}) { selection in
+      Text("Selected \(selection.id) in first section")
+    }
 	}
 
 	let groupBackgroundElementID = UUID().uuidString
