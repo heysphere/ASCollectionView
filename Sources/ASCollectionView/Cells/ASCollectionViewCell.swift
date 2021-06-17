@@ -11,6 +11,11 @@ class ASCollectionViewCell: UICollectionViewCell, ASDataSourceConfigurableCell
 	let hostingController = ASHostingController<AnyView>(AnyView(EmptyView()))
 //	var skipNextRefresh: Bool = false
 
+	var cellState: ASCellState
+	{
+		ASCellState(isSelected: isSelected, isHighlighted: isHighlighted)
+	}
+
 	override init(frame: CGRect)
 	{
 		super.init(frame: frame)
