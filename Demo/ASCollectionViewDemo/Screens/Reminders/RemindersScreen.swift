@@ -28,7 +28,13 @@ struct RemindersScreen: View
 	                               GroupModel(icon: "book.fill", title: "Reading list")]
 
 	let addNewModel = GroupModel(icon: "plus", title: "Create new list", contentCount: nil, color: .green)
-  @State var selectedUpper: UpperSelection?
+  @State var selectedUpperID: String?
+  var selectedUpperItem: Binding<GroupModel?> {
+    .init(
+      get: { selectedUpperID.flatMap { id in upperData.first { $0.id == id }} },
+      set: { selectedUpperID = $0?.id }
+    )
+  }
 
 	var body: some View
 	{
@@ -37,7 +43,7 @@ struct RemindersScreen: View
       ASCollectionViewSection<Section>(
         id: .upper,
         data: self.upperData,
-        selectionMode: .selectSingle { index in self.selectedUpper = UpperSelection(id: index) }
+        selectionMode: .single($selectedUpperID)
       ) { model, cellContext in
 				GroupLarge(
           model: model,
@@ -84,7 +90,7 @@ struct RemindersScreen: View
 		.background(Color(.systemGroupedBackground))
 		.edgesIgnoringSafeArea(.all)
 		.navigationBarTitle("Reminders", displayMode: .inline)
-    .sheet(item: $selectedUpper, onDismiss: {}) { selection in
+    .sheet(item: selectedUpperItem, onDismiss: { self.selectedUpperID = nil }) { selection in
       Text("Selected \(selection.id) in first section")
     }
 	}

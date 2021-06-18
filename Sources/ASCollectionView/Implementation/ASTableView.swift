@@ -142,7 +142,7 @@ public struct ASTableView<SectionID: Hashable>: UIViewControllerRepresentable, C
 		func section(forItemID itemID: ASCollectionViewItemUniqueID) -> Section?
 		{
 			parent.sections
-				.first(where: { $0.id.hashValue == itemID.sectionIDHash })
+				.first(where: { AnyHashable($0.id) == itemID.sectionID })
 		}
 
 		func updateTableViewSettings(_ tableView: UITableView)
@@ -532,13 +532,11 @@ public struct ASTableView<SectionID: Hashable>: UIViewControllerRepresentable, C
 
 		public func tableView(_ tableView: UITableView, didHighlightRowAt indexPath: IndexPath)
 		{
-			parent.sections[safe: indexPath.section]?.dataSource.highlightIndex(indexPath.item)
       refreshCells(at: CollectionOfOne(indexPath))
 		}
 
 		public func tableView(_ tableView: UITableView, didUnhighlightRowAt indexPath: IndexPath)
 		{
-			parent.sections[safe: indexPath.section]?.dataSource.unhighlightIndex(indexPath.item)
       refreshCells(at: CollectionOfOne(indexPath))
 		}
 
@@ -567,14 +565,8 @@ public struct ASTableView<SectionID: Hashable>: UIViewControllerRepresentable, C
 
 		public func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath)
 		{
-      let keepSelection = parent.sections[safe: indexPath.section]?.dataSource.didSelect(indexPath) ?? false
-
-      if keepSelection {
-        writebackSelectionToSwiftUI(tableView)
-        refreshCells(at: CollectionOfOne(indexPath))
-      } else {
-        tableView.deselectRow(at: indexPath, animated: true)
-      }
+      writebackSelectionToSwiftUI(tableView)
+      refreshCells(at: CollectionOfOne(indexPath))
 		}
 
 		public func tableView(_ tableView: UITableView, didDeselectRowAt indexPath: IndexPath)
@@ -586,7 +578,7 @@ public struct ASTableView<SectionID: Hashable>: UIViewControllerRepresentable, C
     func writebackSelectionToSwiftUI(_ tableView: UITableView)
     {
       let selectedInTableView = Set(tableView.indexPathsForSelectedRows ?? [])
-      guard selectedIndexPathsInDataSource != selectedInTableView else { return }
+      guard selectedIndexPathsInSwiftUI != selectedInTableView else { return }
 
       let selectionBySection = Dictionary(grouping: selectedInTableView) { $0.section }
         .mapValues
@@ -596,13 +588,13 @@ public struct ASTableView<SectionID: Hashable>: UIViewControllerRepresentable, C
 
       parent.sections.enumerated().forEach
       { offset, section in
-        section.dataSource.updateSelection(with: selectionBySection[offset] ?? [])
+        section.dataSource.writebackSelectionToSwiftUI(with: selectionBySection[offset] ?? [])
       }
     }
 
     func applySelectionFromSwiftUI(_ tableView: UITableView, transaction: Transaction? = nil)
     {
-      let selectedInDataSource = selectedIndexPathsInDataSource
+      let selectedInDataSource = selectedIndexPathsInSwiftUI
       let selectedInTableView = Set(tableView.indexPathsForSelectedRows ?? [])
       guard selectedInDataSource != selectedInTableView else { return }
 
@@ -610,13 +602,13 @@ public struct ASTableView<SectionID: Hashable>: UIViewControllerRepresentable, C
       updateSelectionInTableView(tableView, indexPathsToDeselect: toDeselect, indexPathsToSelect: toSelect, transaction: transaction)
     }
 
-		private var selectedIndexPathsInDataSource: Set<IndexPath>
+		private var selectedIndexPathsInSwiftUI: Set<IndexPath>
 		{
-			parent.sections.enumerated().reduce(Set<IndexPath>())
-			{ (selectedIndexPaths, section) -> Set<IndexPath> in
-				guard let indexes = section.element.dataSource.selectedIndicesBinding?.wrappedValue else { return selectedIndexPaths }
-				let indexPaths = indexes.map { IndexPath(item: $0, section: section.offset) }
-				return selectedIndexPaths.union(indexPaths)
+      parent.sections.enumerated().reduce(into: Set<IndexPath>())
+			{ (selectedIndexPaths, section) in
+        let indices = section.element.dataSource.currentSwiftUISelections()
+        let indexPaths = indices.lazy.map { IndexPath(item: $0, section: section.offset) }
+				selectedIndexPaths.formUnion(indexPaths)
 			}
 		}
 
@@ -632,6 +624,10 @@ public struct ASTableView<SectionID: Hashable>: UIViewControllerRepresentable, C
 			let isAnimated = (transaction?.animation != nil) && !(transaction?.disablesAnimations ?? false)
 			indexPathsToDeselect.forEach { tableView.deselectRow(at: $0, animated: isAnimated) }
 			indexPathsToSelect.forEach { tableView.selectRow(at: $0, animated: isAnimated, scrollPosition: .none) }
+
+      // Programmatic selection & deselection does not trigger delegate call. Refresh those cells manually.
+      refreshCells(at: indexPathsToDeselect)
+      refreshCells(at: indexPathsToSelect)
 		}
 
 		public func tableView(_ tableView: UITableView, itemsForBeginning session: UIDragSession, at indexPath: IndexPath) -> [UIDragItem]

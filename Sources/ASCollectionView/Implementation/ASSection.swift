@@ -15,12 +15,13 @@ public struct ASCollectionViewStaticContent: Identifiable
 @available(iOS 13.0, *)
 public struct ASCollectionViewItemUniqueID: Hashable
 {
-	var sectionIDHash: Int
-	var itemIDHash: Int
+	var sectionID: AnyHashable
+	var itemID: AnyHashable
+
 	init<SectionID: Hashable, ItemID: Hashable>(sectionID: SectionID, itemID: ItemID)
 	{
-		sectionIDHash = sectionID.hashValue
-		itemIDHash = itemID.hashValue
+    self.sectionID = AnyHashable(sectionID)
+    self.itemID = AnyHashable(itemID)
 	}
 }
 

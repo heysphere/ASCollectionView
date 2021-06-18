@@ -8,9 +8,16 @@ import UIKit
 struct WaterfallScreen: View
 {
 	@State var data: [[Post]] = (0 ... 10).map { DataSource.postsForWaterfallSection($0, number: 100) }
-	@State var selectedIndexes: [SectionID: Set<Int>] = [:]
-	@State var selectedPost: Post? = nil // Post being viewed in the detail view
+	@State var selectedIDs: [SectionID: Set<Int>] = [:]
+	@State var selectedPostID: Int? = nil // Post being viewed in the detail view
 	@State var columnMinSize: CGFloat = 150
+
+  var selectedPost: Binding<Post?> {
+    .init(
+      get: { selectedPostID.flatMap { id in data.lazy.compactMap { $0.first { $0.id == id } }.first } },
+      set: { selectedPostID = $0?.id }
+    )
+  }
 
 	@Environment(\.editMode) private var editMode
 	var isEditing: Bool
@@ -27,10 +34,7 @@ struct WaterfallScreen: View
 			ASCollectionViewSection(
 				id: offset,
 				data: sectionData,
-				selectionMode: self.isEditing ? .selectMultiple($selectedIndexes[offset]) : .selectSingle
-				{ selectedIndex in
-					selectedPost = sectionData[selectedIndex]
-				},
+				selectionMode: self.isEditing ? .multiple($selectedIDs[offset]) : .single($selectedPostID),
 				onCellEvent: onCellEvent)
 			{ item, state in
 				GeometryReader
@@ -100,7 +104,7 @@ struct WaterfallScreen: View
 				.layout(self.layout)
 				.customDelegate(WaterfallScreenLayoutDelegate.init)
 				.contentInsets(.init(top: 0, left: 10, bottom: 10, right: 10))
-				.postSheet(item: $selectedPost, onDismiss: { self.selectedIndexes = [:] })
+				.postSheet(item: selectedPost, onDismiss: { self.selectedIDs = [:] })
 				.navigationBarTitle("Waterfall Layout", displayMode: .inline)
 				.navigationBarItems(
 					trailing:
@@ -111,7 +115,7 @@ struct WaterfallScreen: View
 							Button(action: {
 								withAnimation
 								{
-									self.selectedIndexes.forEach
+									self.selectedIDs.forEach
 									{ sectionIndex, selected in
 										self.data[sectionIndex].remove(atOffsets: IndexSet(selected))
 									}
