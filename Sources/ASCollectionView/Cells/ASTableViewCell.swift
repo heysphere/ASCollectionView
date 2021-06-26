@@ -50,6 +50,8 @@ class ASTableViewCell: UITableViewCell, ASDataSourceConfigurableCell
 
 	override func prepareForReuse()
 	{
+		super.prepareForReuse()
+
 		itemID = nil
 		isSelected = false
 		backgroundColor = nil
