@@ -326,11 +326,15 @@ public struct ASCollectionView<SectionID: Hashable>: UIViewControllerRepresentab
 		func refreshVisibleCells(transaction: Transaction? = nil, updateAll: Bool = true)
 		{
 			guard let cv = collectionViewController?.collectionView else { return }
+
+      let invalidationContextType = type(of: cv.collectionViewLayout).invalidationContextClass as! UICollectionViewLayoutInvalidationContext.Type
+      let invalidationContext = invalidationContextType.init()
+
 			for cell in cv.visibleCells
 			{
-				refreshCell(cell)
+				refreshCell(cell, invalidationContext: invalidationContext)
 			}
-      invalidateLayoutForVisibleItems(collectionView: cv)
+
 			supplementaryKinds().forEach
 			{ kind in
 				for indexPath in cv.indexPathsForVisibleSupplementaryElements(ofKind: kind)
@@ -344,36 +348,38 @@ public struct ASCollectionView<SectionID: Hashable>: UIViewControllerRepresentab
 					supplementaryView.setContent(supplementaryID: supplementaryID, content: section.dataSource.content(supplementaryID: supplementaryID))
 				}
 			}
-		}
 
-    func invalidateLayoutForVisibleItems(collectionView: UICollectionView) {
-      let cellsIndexPaths = collectionView.indexPathsForVisibleItems
-      let supplementaryPairs = supplementaryKinds()
-        .map { kind -> (kind: String, indexPaths: [IndexPath]) in
-          return (kind, collectionView.indexPathsForVisibleSupplementaryElements(ofKind: kind))
-        }
-
-      let invalidationContextType = type(of: collectionView.collectionViewLayout).invalidationContextClass as! UICollectionViewLayoutInvalidationContext.Type
-      let invalidationContext = invalidationContextType.init()
-      invalidationContext.invalidateItems(at: cellsIndexPaths)
-
-      supplementaryPairs.forEach { (pair) in
-        invalidationContext.invalidateSupplementaryElements(ofKind: pair.kind, at: pair.indexPaths)
+      if !(invalidationContext.invalidatedItemIndexPaths ?? []).isEmpty {
+        cv.collectionViewLayout.invalidateLayout(with: invalidationContext)
       }
-
-      collectionView.collectionViewLayout.invalidateLayout(with: invalidationContext)
-    }
+		}
 
 		func refreshCell(_ cell: UICollectionViewCell)
 		{
-			guard
-				let cell = cell as? Cell,
-				let itemID = cell.itemID,
-				let section = section(forItemID: itemID)
-			else { return }
+      refreshCell(cell, invalidationContext: nil)
+    }
+
+    func refreshCell(_ cell: UICollectionViewCell, invalidationContext: UICollectionViewLayoutInvalidationContext?) {
+      guard
+        let cell = cell as? ASCollectionViewCell,
+        let indexPath = collectionViewController?.collectionView.indexPath(for: cell)
+      else { return }
+
+      let section = parent.sections[indexPath.section]
+      guard let itemID = section.dataSource.getItemID(for: indexPath.item, withSectionID: section.id) else { return }
+
+      let currentSize = cell.frame.size
+
       cell.setContent(itemID: itemID, content: section.dataSource.content(forItemID: itemID, cellState: cell.cellState))
 			cell.disableSwiftUIDropInteraction = section.dataSource.dropEnabled
 			cell.disableSwiftUIDragInteraction = section.dataSource.dragEnabled
+
+      if let context = invalidationContext {
+        let newSize = cell.systemLayoutSizeFitting(currentSize, withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel)
+        if currentSize != newSize {
+          context.invalidateItems(at: [indexPath])
+        }
+      }
 		}
 
 		func onMoveToParent()

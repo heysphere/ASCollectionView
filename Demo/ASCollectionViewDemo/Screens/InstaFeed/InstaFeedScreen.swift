@@ -50,7 +50,7 @@ struct InstaFeedScreen: View
 				data: sectionData,
 				onCellEvent: onCellEventPosts)
 			{ item, _ in
-				PostView(post: item)
+				PostView(post: item).frame(height: 100).clipped()
 			}
 			.tableViewSetEstimatedSizes(headerHeight: 50) // Optional: Provide reasonable estimated heights for this section
 			.sectionHeader
@@ -69,24 +69,25 @@ struct InstaFeedScreen: View
 
 	var body: some View
 	{
-		ASTableView
+		ASCollectionView
 		{
 			storiesSection // An ASSection
 			postSections // An array of ASSection's
 		}
-		.onReachedBottom
-		{
-			self.loadMoreContent() // REACHED BOTTOM, LOADING MORE CONTENT
-		}
-		.separatorsEnabled(false)
-		.onPullToRefresh
-		{ endRefreshing in
-			print("PULL TO REFRESH")
-			Timer.scheduledTimer(withTimeInterval: 2, repeats: false)
-			{ _ in
-				endRefreshing()
+		.onReachedBoundary { edge in
+			if edge == .bottom {
+				self.loadMoreContent() // REACHED BOTTOM, LOADING MORE CONTENT
 			}
 		}
+		.layout(.init(layout: { .list(itemSize: .estimated(60)) }))
+//		.onPullToRefresh
+//		{ endRefreshing in
+//			print("PULL TO REFRESH")
+//			Timer.scheduledTimer(withTimeInterval: 2, repeats: false)
+//			{ _ in
+//				endRefreshing()
+//			}
+//		}
 		.navigationBarTitle("Insta Feed (tableview)", displayMode: .inline)
 	}
 

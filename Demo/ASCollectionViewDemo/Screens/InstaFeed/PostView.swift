@@ -103,6 +103,7 @@ struct PostView: View
 			Spacer().layoutPriority(2)
 		}
 		.padding([.top, .bottom])
+		.clipped()
 	}
 }
 
