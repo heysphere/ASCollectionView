@@ -319,7 +319,7 @@ public struct ASCollectionView<SectionID: Hashable>: UIViewControllerRepresentab
 
 			for cell in indexPaths.compactMap(cv.cellForItem(at:))
 			{
-				refreshCell(cell, forceUpdate: false)
+				refreshCell(cell)
 			}
 		}
 
@@ -328,9 +328,9 @@ public struct ASCollectionView<SectionID: Hashable>: UIViewControllerRepresentab
 			guard let cv = collectionViewController?.collectionView else { return }
 			for cell in cv.visibleCells
 			{
-				refreshCell(cell, forceUpdate: updateAll)
+				refreshCell(cell)
 			}
-
+      invalidateLayoutForVisibleItems(collectionView: cv)
 			supplementaryKinds().forEach
 			{ kind in
 				for indexPath in cv.indexPathsForVisibleSupplementaryElements(ofKind: kind)
@@ -346,26 +346,34 @@ public struct ASCollectionView<SectionID: Hashable>: UIViewControllerRepresentab
 			}
 		}
 
-		func refreshCell(_ cell: UICollectionViewCell, forceUpdate: Bool = false)
+    func invalidateLayoutForVisibleItems(collectionView: UICollectionView) {
+      let cellsIndexPaths = collectionView.indexPathsForVisibleItems
+      let supplementaryPairs = supplementaryKinds()
+        .map { kind -> (kind: String, indexPaths: [IndexPath]) in
+          return (kind, collectionView.indexPathsForVisibleSupplementaryElements(ofKind: kind))
+        }
+
+      let invalidationContextType = type(of: collectionView.collectionViewLayout).invalidationContextClass as! UICollectionViewLayoutInvalidationContext.Type
+      let invalidationContext = invalidationContextType.init()
+      invalidationContext.invalidateItems(at: cellsIndexPaths)
+
+      supplementaryPairs.forEach { (pair) in
+        invalidationContext.invalidateSupplementaryElements(ofKind: pair.kind, at: pair.indexPaths)
+      }
+
+      collectionView.collectionViewLayout.invalidateLayout(with: invalidationContext)
+    }
+
+		func refreshCell(_ cell: UICollectionViewCell)
 		{
 			guard
 				let cell = cell as? Cell,
 				let itemID = cell.itemID,
 				let section = section(forItemID: itemID)
 			else { return }
-//			if cell.skipNextRefresh, !forceUpdate
-//			{
-//				cell.skipNextRefresh = false
-//			}
-//			else
-//			{
-			cell.setContent(
-				itemID: itemID,
-				content: section.dataSource.content(forItemID: itemID, cellState: cell.cellState)
-			)
+      cell.setContent(itemID: itemID, content: section.dataSource.content(forItemID: itemID, cellState: cell.cellState))
 			cell.disableSwiftUIDropInteraction = section.dataSource.dropEnabled
 			cell.disableSwiftUIDragInteraction = section.dataSource.dragEnabled
-//			}
 		}
 
 		func onMoveToParent()
@@ -1025,6 +1033,7 @@ internal protocol ASCollectionViewCoordinator: AnyObject
 	func collectionView(_ collectionView: UICollectionView, itemsForBeginning session: UIDragSession, at indexPath: IndexPath) -> [UIDragItem]
 	func collectionView(_ collectionView: UICollectionView, dropSessionDidUpdate session: UIDropSession, withDestinationIndexPath destinationIndexPath: IndexPath?) -> UICollectionViewDropProposal
 	func collectionView(_ collectionView: UICollectionView, performDropWith coordinator: UICollectionViewDropCoordinator)
+  func refreshCell(_ cell: UICollectionViewCell)
 	func didUpdateContentSize(_ size: CGSize)
 	func scrollViewDidScroll(_ scrollView: UIScrollView)
 	func onMoveToParent()

@@ -71,6 +71,11 @@ class ASCollectionViewCell: UICollectionViewCell, ASDataSourceConfigurableCell
 		hostingController.viewController.view.layoutIfNeeded()
 	}
 
+  override func preferredLayoutAttributesFitting(_ layoutAttributes: UICollectionViewLayoutAttributes) -> UICollectionViewLayoutAttributes {
+    collectionViewController?.coordinator?.refreshCell(self)
+    return super.preferredLayoutAttributesFitting(layoutAttributes)
+  }
+
 	override func systemLayoutSizeFitting(_ targetSize: CGSize, withHorizontalFittingPriority horizontalFittingPriority: UILayoutPriority, verticalFittingPriority: UILayoutPriority) -> CGSize
 	{
 		let selfSizeHorizontal = selfSizingConfig.selfSizeHorizontally ?? (horizontalFittingPriority != .required)
